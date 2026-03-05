@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مهام اليوم – PWA نهائي</title>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.2/dist/tailwind.min.css" rel="stylesheet">
+<link rel="manifest" href="manifest.json">
+<style>
+  body { background: linear-gradient(to bottom, #fef9ff, #dbeafe); font-family: sans-serif; }
+  .task-color-0 { background-color:#fef3c7; }
+  .task-color-1 { background-color:#dcfce7; }
+  .task-color-2 { background-color:#dbeafe; }
+  .task-color-3 { background-color:#fde2e4; }
+  .task-color-4 { background-color:#ede9fe; }
+</style>
+</head>
+<body class="flex flex-col items-center p-6">
+
+<h1 class="text-3xl font-bold mb-6 text-purple-700">📋 مهام اليوم – إشعارات كاملة</h1>
+
+<div class="mb-4 flex flex-col gap-2 w-full max-w-md">
+  <div class="flex gap-2">
+    <input type="text" id="taskInput" placeholder="اكتب مهمتك..." class="p-2 border rounded w-60">
+    <input type="time" id="timeInput" class="p-2 border rounded w-32">
+  </div>
+  <div class="flex gap-2 items-center flex-wrap">
+    <select id="repeatInput" class="p-2 border rounded">
+      <option value="">عدد التكرار</option>
+      ${Array.from({length:100}, (_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}
+    </select>
+    <select id="daysInput" multiple class="p-2 border rounded">
+      <option value="Sun">الأحد</option>
+      <option value="Mon">الإثنين</option>
+      <option value="Tue">الثلاثاء</option>
+      <option value="Wed">الأربعاء</option>
+      <option value="Thu">الخميس</option>
+      <option value="Fri">الجمعة</option>
+      <option value="Sat">السبت</option>
+    </select>
+    <button id="addBtn" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">➕ أضف</button>
+    <button id="clearBtn" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">🗑️ مسح الكل</button>
+    <button id="stopAllBtn" class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600">⏹️ إيقاف كل التنبيهات</button>
+  </div>
+</div>
+
+<ul id="taskList" class="w-full max-w-md space-y-2"></ul>
+<div class="mt-6 text-xl font-mono" id="currentTime"></div>
+<audio id="alarmSound" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" preload="auto"></audio>
+
+<script>
+// =================== Service Worker ===================
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js')
+  .then(()=>console.log('SW مسجل ✅'))
+  .catch(err=>console.error('فشل تسجيل SW',err));
+}
+
+// =================== إشعارات الموبايل ===================
+if("Notification" in window && Notification.permission!=="granted"){Notification.requestPermission();}
+
+const taskInput=document.getElementById('taskInput');
+const timeInput=document.getElementById('timeInput');
+const repeatInput=document.getElementById('repeatInput');
+const daysInput=document.getElementById('daysInput');
+const addBtn=document.getElementById('addBtn');
+const clearBtn=document.getElementById('clearBtn');
+const stopAllBtn=document.getElementById('stopAllBtn');
+const taskList=document.getElementById('taskList');
+const currentTimeEl=document.getElementById('currentTime');
+const alarmSound=document.getElementById('alarmSound');
+
+let tasks=[];
+let stopAll=false;
+
+function updateClock(){const now=new Date();currentTimeEl.textContent=now.toLocaleTimeString();}
+setInterval(updateClock,1000);
+
+addBtn.addEventListener('click',()=>{
+  const taskText=taskInput.value.trim();
+  const taskTime=timeInput.value;
+  const repeat=parseInt(repeatInput.value)||1;
+  const days=Array.from(daysInput.selectedOptions).map(o=>o.value);
+  if(!taskText||!taskTime||days.length===0)return alert('اكتب المهمة وحدد الوقت والأيام!');
+  const task={id:Date.now(),text:taskText,time:taskTime,repeat,days,done:false,color:tasks.length%5};
+  tasks.push(task);
+  renderTasks();
+  taskInput.value=''; timeInput.value=''; repeatInput.value=''; daysInput.selectedIndex=-1;
+});
+
+clearBtn.addEventListener('click',()=>{if(confirm('هل تريد مسح كل المهام؟')){tasks=[];renderTasks();}});
+stopAllBtn.addEventListener('click',()=>{stopAll=true; alarmSound.pause(); alert('تم إيقاف كل التنبيهات');});
+
+function showNotification(task){
+  if(Notification.permission==="granted"){
+    new Notification("📌 تذكير بمهمة",{body:task.text+" ⏰ "+task.time,icon:"icon.png"});
+  }
+}
+
+function renderTasks(){
+  taskList.innerHTML='';
+  tasks.forEach(task=>{
+    const li=document.createElement('li');
+    li.className=`p-3 rounded flex flex-col shadow task-color-${task.color}`;
+
+    const info=document.createElement('div');
+    info.innerHTML=`📌 ${task.text} 🔔 ${task.time} 🔁 ${task.repeat} مرات 📅 ${task.days.join(', ')}`;
+    li.appendChild(info);
+
+    const countdown=document.createElement('span'); countdown.className="font-mono mt-1"; li.appendChild(countdown);
+
+    const doneBtn=document.createElement('button'); 
+    doneBtn.textContent="✅"; 
+    doneBtn.className="mt-2 text-green-700 font-bold self-start"; 
+    doneBtn.onclick=()=>{tasks=tasks.filter(t=>t.id!==task.id);renderTasks();};
+    li.appendChild(doneBtn);
+
+    taskList.appendChild(li);
+
+    let repetition=0;
+
+    function updateCountdown(){
+      if(stopAll) return;
+      const now=new Date();
+      const dayName=now.toLocaleDateString('en-US',{weekday:'short'});
+      if(!task.days.includes(dayName)){countdown.textContent='📅 اليوم غير محدد';return;}
+      const [hours,minutes]=task.time.split(':');
+      let taskDate=new Date(); taskDate.setHours(hours,minutes,0,0);
+      let diff=taskDate-now;
+
+      if(diff<=0 && repetition<task.repeat){
+        alarmSound.play();
+        if(navigator.vibrate) navigator.vibrate([500,200,500]);
+        li.classList.add('bg-gray-200');
+        showNotification(task);
+        repetition++;
+        taskDate=new Date(now.getTime()+5*60000);
+        diff=taskDate-now;
+      }
+
+      if(repetition>=task.repeat){
+        countdown.textContent="⏰ انتهت كل التكرارات!";
+        li.classList.add('line-through','text-gray-500');
+      } else {
+        const m=Math.floor(diff/60000);
+        const s=Math.floor((diff%60000)/1000);
+        countdown.textContent=`${m} دقيقة : ${s} ثانية`;
+      }
+    }
+
+    updateCountdown();
+    setInterval(updateCountdown,1000);
+  });
+}
+</script>
+</body>
+</html>
+
